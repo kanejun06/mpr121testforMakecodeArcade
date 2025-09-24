@@ -42,8 +42,7 @@ namespace MPR121A {
         started = true
 
         // SDA=20, SCL=19, FREQ=100kHz, MODE=0, address=0
-        const i2c2 = pins.createI2C(pins.SDA, pins.SCL)
-
+        i2c = pins.createI2C(pins.SDA, pins.SCL)
 
         // ソフトリセット→停止
         w8(REG_SOFTRESET, 0x63); pause(5)
