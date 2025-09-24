@@ -17,6 +17,16 @@ namespace MPR121A {
     const pressedHandlers: ((k: number) => void)[] = []
     const releasedHandlers: ((k: number) => void)[] = []
 
+    // ==== 追加：CH表示用オフセット ====
+    let chOffset = 0
+    /**
+     * 表示したいチャンネル番号(CH)と電極番号(T)のズレを補正します。
+     * 例) CH0がT8に相当するなら setChannelOffset(4)
+     */
+    export function setChannelOffset(n: number) {
+        chOffset = ((n % 12) + 12) % 12
+    }
+
     // --- I2C ヘルパ ---
     function w8(reg: number, val: number) {
         const b = pins.createBuffer(2)
@@ -41,8 +51,9 @@ namespace MPR121A {
         if (started) return
         started = true
 
-        // SDA=20, SCL=19, FREQ=100kHz, MODE=0, address=0
+        // Arcade: 2引数版 (ボード既定のSDA/SCLが使えるならこれでOK)
         i2c = pins.createI2C(pins.SDA, pins.SCL)
+        // 必要なら数値で: i2c = pins.createI2C(20, 19)
 
         // ソフトリセット→停止
         w8(REG_SOFTRESET, 0x63); pause(5)
@@ -70,8 +81,10 @@ namespace MPR121A {
                 for (let n = 0; n < 12; n++) {
                     const bit = 1 << n
                     if (diff & bit) {
-                        if (m & bit) pressedHandlers.forEach(h => h(n))
-                        else releasedHandlers.forEach(h => h(n))
+                        // ==== ここで補正してから通知 ====
+                        const ch = (n + chOffset) % 12
+                        if (m & bit) pressedHandlers.forEach(h => h(ch))
+                        else releasedHandlers.forEach(h => h(ch))
                     }
                 }
                 prevMask = m
