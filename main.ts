@@ -4,6 +4,9 @@ namespace MPR121A {
     let prevMask = 0
     let i2c: I2C
 
+    // 公開: いま押されているCH（無しは -1）
+    export let TouchID = -1
+
     // --- レジスタ定義 ---
     const REG_TS_L = 0x00, REG_TS_H = 0x01, REG_SOFTRESET = 0x80
     const REG_ECR = 0x5E, REG_DEB = 0x5B, REG_CFG1 = 0x5C, REG_CFG2 = 0x5D
@@ -13,21 +16,18 @@ namespace MPR121A {
     function REG_TTH(k: number) { return 0x41 + k * 2 }
     function REG_RTH(k: number) { return 0x42 + k * 2 }
 
-    // --- ハンドラ格納 ---
+    // ハンドラ
     const pressedHandlers: ((k: number) => void)[] = []
     const releasedHandlers: ((k: number) => void)[] = []
 
-    // ==== 追加：CH表示用オフセット ====
+    // ★CH表示用オフセット（デフォルト0）
     let chOffset = 0
-    /**
-     * 表示したいチャンネル番号(CH)と電極番号(T)のズレを補正します。
-     * 例) CH0がT8に相当するなら setChannelOffset(4)
-     */
+    /** CHとTxのズレ補正（例: CH0≡T8なら setChannelOffset(4)） */
     export function setChannelOffset(n: number) {
         chOffset = ((n % 12) + 12) % 12
     }
 
-    // --- I2C ヘルパ ---
+    // I2C ヘルパ
     function w8(reg: number, val: number) {
         const b = pins.createBuffer(2)
         b.setNumber(NumberFormat.UInt8LE, 0, reg)
@@ -46,45 +46,48 @@ namespace MPR121A {
         return ((h << 8) | l) & 0x0FFF
     }
 
-    // --- 初期化 ---
+    // 初期化
     function initOnce() {
         if (started) return
         started = true
 
-        // Arcade: 2引数版 (ボード既定のSDA/SCLが使えるならこれでOK)
+        // Arcade: 2引数版 (必要なら pins.SDA/pins.SCL→数値に変更)
         i2c = pins.createI2C(pins.SDA, pins.SCL)
-        // 必要なら数値で: i2c = pins.createI2C(20, 19)
+        // 例: i2c = pins.createI2C(20, 19)
 
         // ソフトリセット→停止
         w8(REG_SOFTRESET, 0x63); pause(5)
         w8(REG_ECR, 0x00); pause(5)
 
-        // 推奨フィルタ設定
+        // 推奨フィルタ/設定
         w8(REG_MHDR, 0x01); w8(REG_NHDR, 0x01); w8(REG_NCLR, 0x00); w8(REG_FDLR, 0x00)
         w8(REG_MHDF, 0x01); w8(REG_NHDF, 0x01); w8(REG_NCLF, 0xFF); w8(REG_FDLF, 0x02)
         w8(REG_NHDT, 0x01); w8(REG_NCLT, 0xFF); w8(REG_FDLT, 0x02)
-
         w8(REG_DEB, 0x00); w8(REG_CFG1, 0x10); w8(REG_CFG2, 0x24)
 
-        // 閾値設定
+        // 閾値
         for (let k = 0; k < 12; k++) { w8(REG_TTH(k), 12); w8(REG_RTH(k), 6) }
 
-        // 起動（12電極有効）
+        // 起動（12電極）
         w8(REG_ECR, 0x8F); pause(5)
         prevMask = readMask()
 
-        // ポーリング（50msごと）
+        // ポーリング（エッジ検出）
         game.onUpdateInterval(50, function () {
             const m = readMask()
             const diff = m ^ prevMask
             if (diff) {
-                for (let n = 0; n < 12; n++) {
-                    const bit = 1 << n
+                for (let e = 0; e < 12; e++) {        // e: electrode index (T)
+                    const bit = 1 << e
                     if (diff & bit) {
-                        // ==== ここで補正してから通知 ====
-                        const ch = (n + chOffset) % 12
-                        if (m & bit) pressedHandlers.forEach(h => h(ch))
-                        else releasedHandlers.forEach(h => h(ch))
+                        const ch = (e + chOffset) % 12 // 補正後CH
+                        if (m & bit) {
+                            TouchID = ch              // 押下中CHを保持
+                            pressedHandlers.forEach(h => h(ch))
+                        } else {
+                            if (TouchID === ch) TouchID = -1
+                            releasedHandlers.forEach(h => h(ch))
+                        }
                     }
                 }
                 prevMask = m
@@ -92,7 +95,7 @@ namespace MPR121A {
         })
     }
 
-    // --- API（初期化は内部で自動実行） ---
+    // API
     export function onPressed(handler: (key: number) => void) {
         initOnce()
         pressedHandlers.push(handler)
